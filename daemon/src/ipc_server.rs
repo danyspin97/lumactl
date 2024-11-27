@@ -1,16 +1,14 @@
 //! IPC socket server.
 //! Based on <https://github.com/catacombing/catacomb/blob/master/src/ipc_server.rs>
 
-use std::collections::HashSet;
 use std::fs;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use eyre::{bail, Result};
+use eyre::Result;
 use eyre::{ensure, Context};
 use lumaipc::{DisplayBrightness, IpcError, IpcRequest, IpcResponse};
-use smithay_client_toolkit::reexports::client::QueueHandle;
 
 use crate::socket::SocketSource;
 use crate::Lumactld;
@@ -29,11 +27,7 @@ pub fn listen_on_ipc_socket(socket_path: &Path) -> Result<SocketSource> {
 }
 
 /// Handle IPC socket messages.
-pub fn handle_message(
-    ustream: UnixStream,
-    qh: QueueHandle<Lumactld>,
-    lumactld: &mut Lumactld,
-) -> Result<()> {
+pub fn handle_message(ustream: UnixStream, lumactld: &mut Lumactld) -> Result<()> {
     const SIZE: usize = 4096;
     let mut buffer = [0; SIZE];
 

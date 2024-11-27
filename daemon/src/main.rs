@@ -243,7 +243,7 @@ fn main() -> Result<()> {
     event_loop
         .handle()
         .insert_source(socket, |stream, _, lumactl| {
-            if let Err(err) = handle_message(stream, qh.clone(), lumactl) {
+            if let Err(err) = handle_message(stream, lumactl) {
                 error!("{:?}", err);
             }
         })?;

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use xdg::{BaseDirectories, BaseDirectoriesError};
