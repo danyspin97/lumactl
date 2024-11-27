@@ -1,0 +1,9 @@
+[workspace]
+
+members = [
+    "cli",
+    "ipc",
+    "daemon",
+]
+
+resolver = "2"

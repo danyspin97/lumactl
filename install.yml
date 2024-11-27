@@ -1,0 +1,7 @@
+rinstall: 0.2.0
+pkgs:
+  lumactl:
+    type: rust
+    exe:
+      - lumactl
+      - lumactld
