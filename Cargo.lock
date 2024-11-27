@@ -632,6 +632,7 @@ dependencies = [
  "flexi_logger",
  "log",
  "lumaipc",
+ "nix",
  "serde_json",
  "smithay-client-toolkit",
  "wayland-client",

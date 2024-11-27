@@ -2,6 +2,7 @@ mod ipc_server;
 mod socket;
 
 use std::path::Path;
+use std::process::exit;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -13,11 +14,14 @@ use eyre::ensure;
 use eyre::eyre;
 use eyre::Context;
 use eyre::Result;
+use flexi_logger::Duplicate;
+use flexi_logger::FileSpec;
 use flexi_logger::Logger;
 use ipc_server::handle_message;
 use ipc_server::listen_on_ipc_socket;
 use log::error;
 use log::warn;
+use nix::unistd::fork;
 use smithay_client_toolkit::output::OutputInfo;
 use smithay_client_toolkit::reexports::calloop;
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
@@ -30,6 +34,7 @@ use smithay_client_toolkit::{
 use wayland_client::{globals::registry_queue_init, protocol::wl_output, Connection, QueueHandle};
 
 use lumaipc::socket_path;
+use xdg::BaseDirectories;
 
 const BACKLIGHT_PATHS: [&str; 4] = [
     "/sys/class/backlight/intel_backlight/",
@@ -203,7 +208,23 @@ fn parse_path(path: std::path::PathBuf) -> Option<u8> {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let _logger = Logger::try_with_env_or_str(if args.verbose { "debug" } else { "info" })?;
+    let xdg_dirs = BaseDirectories::with_prefix("lumactl")?;
+
+    let mut logger = Logger::try_with_env_or_str(if args.verbose { "debug" } else { "info" })?;
+
+    if args.daemon {
+        // If wpaperd detach, then log to files
+        logger = logger.log_to_file(FileSpec::default().directory(xdg_dirs.get_state_home()));
+        match unsafe { fork()? } {
+            nix::unistd::ForkResult::Parent { child: _ } => exit(0),
+            nix::unistd::ForkResult::Child => {}
+        }
+    } else {
+        // otherwise prints everything in the stdout/stderr
+        logger = logger.duplicate_to_stderr(Duplicate::Warn);
+    }
+
+    logger.start()?;
 
     // Try to connect to the Wayland server.
     let conn = Connection::connect_to_env()?;
