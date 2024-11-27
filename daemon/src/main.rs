@@ -13,6 +13,7 @@ use eyre::ensure;
 use eyre::eyre;
 use eyre::Context;
 use eyre::Result;
+use flexi_logger::Logger;
 use ipc_server::handle_message;
 use ipc_server::listen_on_ipc_socket;
 use log::error;
@@ -49,6 +50,8 @@ struct Args {
         help = "Detach from the terminal and run in the background"
     )]
     daemon: bool,
+    #[clap(short, long, help = "Enable verbose logging")]
+    verbose: bool,
 }
 
 struct Display {
@@ -200,9 +203,7 @@ fn parse_path(path: std::path::PathBuf) -> Option<u8> {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // We initialize the logger for the purpose of debugging.
-    // Set `RUST_LOG=debug` to see extra debug information.
-    env_logger::init();
+    let _logger = Logger::try_with_env_or_str(if args.verbose { "debug" } else { "info" })?;
 
     // Try to connect to the Wayland server.
     let conn = Connection::connect_to_env()?;
