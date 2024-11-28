@@ -1,14 +1,22 @@
 mod ipc_server;
 mod socket;
 
+use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::exit;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use clap::Parser;
+use ddc::Edid;
+use ddc_hi::Backend;
 use ddc_hi::Ddc;
+use ddc_hi::DisplayInfo;
+use ddc_hi::Handle;
+use ddc_i2c::I2cDdc;
 use eyre::bail;
 use eyre::ensure;
 use eyre::eyre;
@@ -17,6 +25,7 @@ use eyre::Result;
 use flexi_logger::Duplicate;
 use flexi_logger::FileSpec;
 use flexi_logger::Logger;
+use i2c_linux::I2c;
 use ipc_server::handle_message;
 use ipc_server::listen_on_ipc_socket;
 use log::error;
@@ -64,7 +73,61 @@ struct Display {
     ddc: Option<ddc_hi::Display>,
 }
 
+fn get_ddc_display(info: &OutputInfo) -> Option<ddc_hi::Display> {
+    if let Some(name) = &info.name {
+        const SYS_DRM_ROOT: &str = "/sys/class/drm/";
+        if let Some(i2c_device) = fs::read_dir(SYS_DRM_ROOT)
+            .unwrap()
+            // Filter the right drm device for the display
+            .filter_map(|entry| entry.ok())
+            .find_map(|entry| {
+                let file_name = entry.file_name();
+                let file_name = file_name.to_string_lossy();
+                if file_name.starts_with("card") && file_name.ends_with(name) {
+                    // Try all the available i2c devices
+                    for index in 1..=20 {
+                        let i2c_device = format!("i2c-{index}");
+                        let path = entry.path().join(&i2c_device);
+                        if path.exists() {
+                            return Some(i2c_device);
+                        }
+                    }
+
+                    None
+                } else {
+                    None
+                }
+            })
+        {
+            let i2c_dev = Path::new("/dev").join(i2c_device);
+            let mut ddc = I2cDdc::new(I2c::from_path(i2c_dev).unwrap());
+            let id = ddc
+                .inner_ref()
+                .inner_ref()
+                .metadata()
+                .map(|meta| meta.rdev())
+                .unwrap_or_default();
+            let mut edid = vec![0u8; 0x100];
+            ddc.read_edid(0, &mut edid)
+                .map_err(|e| format!("failed to read EDID for i2c-{}: {}", id, e))
+                .unwrap();
+            let display_info = DisplayInfo::from_edid(Backend::I2cDevice, id.to_string(), edid)
+                .map_err(|e| format!("failed to parse EDID for i2c-{}: {}", id, e))
+                .unwrap();
+            Some(ddc_hi::Display::new(Handle::I2cDevice(ddc), display_info))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
 impl Display {
+    fn new(info: OutputInfo, ddc: Option<ddc_hi::Display>) -> Self {
+        Self { info, ddc }
+    }
+
     fn brightness(&mut self) -> Result<(u8, u8)> {
         match &mut self.ddc {
             Some(ddc) => ddc_brightness(ddc),
@@ -142,14 +205,20 @@ impl Display {
 }
 
 fn set_ddc_brightness(ddc: &mut ddc_hi::Display, new_br: u8) -> Result<()> {
-    ddc.handle
+    let now = std::time::Instant::now();
+    let res = ddc
+        .handle
         .set_vcp_feature(0x10, new_br.into())
         .map_err(eyre::Error::msg)
-        .context("failed to set brightness")
+        .context("failed to set brightness");
+    println!("Elapsed: {:?}", now.elapsed());
+    res
 }
 
 fn ddc_brightness(ddc: &mut ddc_hi::Display) -> Result<(u8, u8)> {
-    ddc.handle
+    let now = std::time::Instant::now();
+    let res = ddc
+        .handle
         .get_vcp_feature(0x10)
         .map(|val| {
             (
@@ -157,7 +226,9 @@ fn ddc_brightness(ddc: &mut ddc_hi::Display) -> Result<(u8, u8)> {
                 val.maximum().try_into().unwrap_or(100),
             )
         })
-        .map_err(eyre::Error::msg)
+        .map_err(eyre::Error::msg);
+    println!("Elapsed: {:?}", now.elapsed());
+    res
 }
 
 fn backlight_brightness() -> Result<(u8, u8)> {
@@ -324,42 +395,17 @@ impl Lumactld {
     }
 
     pub fn reload_displays(&mut self) {
-        let mut ddc_displays = ddc_hi::Display::enumerate();
-        if let Err(err) = ddc_displays
-            .iter_mut()
-            .try_for_each(|ddc_display| -> Result<()> {
-                ddc_display
-                    .update_capabilities()
-                    .map_err(|err| eyre!(err))
-                    .context("failed to update capabilities")
-            })
-        {
-            warn!("Failed to enumerate DDC displays: {:?}", err);
-        }
-
         // Our outputs have been initialized with data, we may access what outputs exist and information about
         // said outputs using the output delegate.
         self.displays = self
             .output_state
             .outputs()
-            .filter_map(|output| -> Option<Display> {
-                let info = self.output_state.info(&output);
-                if let Some(info) = info {
-                    let index = ddc_displays.iter().position(|d| match &d.info.model_name {
-                        Some(model) => &info.model == model,
-                        None => false,
-                    });
-                    let ddc = index.map(|index| ddc_displays.remove(index));
-                    Some(Display {
-                        info: info.clone(),
-                        ddc,
-                    })
-                } else {
-                    warn!("output has no info");
-                    None
-                }
+            .filter_map(|output| self.output_state.info(&output))
+            .map(|info| {
+                let ddc = get_ddc_display(&info);
+                Display::new(info, ddc)
             })
-            .collect::<Vec<_>>();
+            .collect();
     }
 }
 

@@ -627,9 +627,12 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "ctrlc",
+ "ddc",
  "ddc-hi",
+ "ddc-i2c",
  "eyre",
  "flexi_logger",
+ "i2c-linux",
  "log",
  "lumaipc",
  "nix",
