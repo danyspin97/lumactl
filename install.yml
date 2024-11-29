@@ -4,4 +4,3 @@ pkgs:
     type: rust
     exe:
       - lumactl
-      - lumactld
