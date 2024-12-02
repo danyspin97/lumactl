@@ -1,8 +1,9 @@
+mod backlight;
+mod brightness_control;
 mod ddc;
 mod display_info;
 
-use std::path::Path;
-
+use brightness_control::BrightnessControl;
 use clap::Parser;
 use clap::Subcommand;
 use ddc::ddc_brightness;
@@ -11,18 +12,9 @@ use ddc::set_ddc_brightness;
 use display_info::DisplayInfo;
 use eyre::bail;
 use eyre::ensure;
-use eyre::eyre;
 use eyre::Context;
 use eyre::ContextCompat;
 use eyre::Result;
-use log::warn;
-
-const BACKLIGHT_PATHS: [&str; 4] = [
-    "/sys/class/backlight/intel_backlight/",
-    "/sys/class/backlight/amdgpu_bl0/",
-    "/sys/class/backlight/radeon_bl0/",
-    "/sys/class/backlight/acpi_video0/",
-];
 
 #[derive(Parser)]
 #[command(name = "lumactl")]
@@ -108,51 +100,6 @@ fn calculate_new_brightness(current_brightness: (u8, u8), new_brightness: &str) 
     Ok(new_br.min(max_br))
 }
 
-fn backlight_brightness() -> Result<(u8, u8)> {
-    for path in BACKLIGHT_PATHS {
-        let br_path = Path::new(path).join("brightness");
-        if br_path.exists() {
-            let br = if let Some(value) = parse_path(br_path) {
-                value
-            } else {
-                continue;
-            };
-            let max_br_path = Path::new(path).join("max_brightness");
-            if max_br_path.exists() {
-                if let Some(max_br) = parse_path(max_br_path) {
-                    return Ok((br, max_br));
-                } else {
-                    return Err(eyre!("Failed to read max_brightness for {}", path));
-                }
-            }
-        }
-    }
-
-    bail!("failed to find a valid backlight path")
-}
-
-fn set_backlight_brightness(new_br: u8) -> Result<(), eyre::Error> {
-    for path in BACKLIGHT_PATHS {
-        let br_path = Path::new(path).join("brightness");
-        if br_path.exists() {
-            std::fs::write(&br_path, new_br.to_string()).context("failed to write brightness")?;
-            return Ok(());
-        }
-    }
-    bail!("failed to find a valid backlight path");
-}
-
-fn parse_path(path: std::path::PathBuf) -> Option<u8> {
-    match std::fs::read_to_string(&path) {
-        Ok(val) => match val.trim().parse::<u8>() {
-            Ok(val) => return Some(val),
-            Err(err) => warn!("Failed to parse {}: {}", path.display(), err),
-        },
-        Err(err) => warn!("Failed to read {}: {}", path.display(), err),
-    }
-    None
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -162,23 +109,8 @@ fn main() -> Result<()> {
             percentage,
         } => {
             if let Some(display_name) = display {
-                let mut ddc_display = if let Some(ddc_display) = ddc::get_ddc_display(&display_name)
-                {
-                    ddc_display
-                } else {
-                    // If we can't find the display by its name, try the model and description
-                    let displays = DisplayInfo::get_displays()?;
-                    let display = displays.iter().find(|d| d.match_name(&display_name));
-                    match display {
-                        Some(display) => {
-                            let ddc_display = get_ddc_display(&display.name);
-                            ddc_display
-                                .with_context(|| format!("Display {} not found", display.name))?
-                        }
-                        None => bail!("Display not found: {}", display_name),
-                    }
-                };
-                match ddc_brightness(&mut ddc_display) {
+                let mut br_ctl = BrightnessControl::get_from_name(&display_name)?;
+                match br_ctl.brightness() {
                     Ok((brightness, max_brightness)) => {
                         println!(
                             "{}",
@@ -189,21 +121,28 @@ fn main() -> Result<()> {
                 }
             } else {
                 let displays = DisplayInfo::get_displays()?;
-                displays
-                    .iter()
-                    .for_each(|display| match get_ddc_display(&display.name) {
-                        Some(mut ddc_display) => match ddc_brightness(&mut ddc_display) {
-                            Ok((brightness, max_brightness)) => {
-                                println!(
-                                    "{}: {}",
-                                    display.name,
-                                    format_brightness(brightness, max_brightness, percentage)
-                                );
-                            }
-                            Err(err) => eprintln!("{err:?}"),
-                        },
-                        None => todo!(),
-                    });
+                displays.into_iter().for_each(|display| {
+                    let res = BrightnessControl::for_device(&display.name)
+                        .with_context(|| {
+                            format!("unable to find brightness control for {}", display.name)
+                        })
+                        .and_then(|br_ctl| {
+                            br_ctl.and_then(|mut br_ctl| {
+                                br_ctl.brightness().map(|(brightness, max_brightness)| {
+                                    println!(
+                                        "{}: {}",
+                                        display.name,
+                                        format_brightness(brightness, max_brightness, percentage)
+                                    );
+                                })
+                            })
+                        });
+
+                    match res {
+                        Ok(_) => {}
+                        Err(err) => eprintln!("{err:?}"),
+                    }
+                });
             }
         }
         Subcmd::Set {
@@ -211,37 +150,25 @@ fn main() -> Result<()> {
             brightness,
         } => {
             if let Some(display_name) = display {
-                let mut ddc_display = if let Some(ddc_display) = ddc::get_ddc_display(&display_name)
-                {
-                    ddc_display
-                } else {
-                    // If we can't find the display by its name, try the model and description
-                    let displays = DisplayInfo::get_displays()?;
-                    let display = displays.iter().find(|d| d.match_name(&display_name));
-                    match display {
-                        Some(display) => {
-                            let ddc_display = get_ddc_display(&display.name);
-                            ddc_display
-                                .with_context(|| format!("Display {} not found", display.name))?
-                        }
-                        None => bail!("Display not found: {}", display_name),
-                    }
-                };
-                set_ddc_brightness(&mut ddc_display, &brightness)?;
+                let mut br_ctl = BrightnessControl::get_from_name(&display_name)?;
+                match br_ctl.set_brightness(brightness.as_str()) {
+                    Ok(_) => {}
+                    Err(err) => eprintln!("{err:?}"),
+                }
             } else {
                 let displays = DisplayInfo::get_displays()?;
-                displays.iter().fold(true, |success, display| {
-                    match get_ddc_display(&display.name) {
-                        Some(mut ddc_display) => {
-                            match set_ddc_brightness(&mut ddc_display, &brightness) {
-                                Ok(_) => success,
-                                Err(err) => {
-                                    eprintln!("{err:?}");
-                                    false
-                                }
-                            }
-                        }
-                        None => todo!(),
+                displays.into_iter().for_each(|display| {
+                    let res = BrightnessControl::for_device(&display.name)
+                        .with_context(|| {
+                            format!("unable to find brightness control for {}", display.name)
+                        })
+                        .and_then(|br_ctl| {
+                            br_ctl.and_then(|mut br_ctl| br_ctl.set_brightness(&brightness))
+                        });
+
+                    match res {
+                        Ok(_) => {}
+                        Err(err) => eprintln!("{err:?}"),
                     }
                 });
             }
