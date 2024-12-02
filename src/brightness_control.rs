@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{fs, path::{Path, PathBuf}};
 
 use eyre::{bail, Result};
 
@@ -12,7 +12,7 @@ use crate::{
 const SYS_DRM_ROOT: &str = "/sys/class/drm/";
 
 pub enum BrightnessControl {
-    Backlight(String),
+    Backlight(PathBuf),
     I2c(ddc_hi::Display),
 }
 
@@ -60,7 +60,7 @@ impl BrightnessControl {
                                 .iter()
                                 .find_map(|backlight| {
                                     if file_name.starts_with(backlight) {
-                                        Some(backlight.to_string())
+                                        Some(entry.path())
                                     } else {
                                         None
                                     }
