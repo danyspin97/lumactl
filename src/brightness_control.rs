@@ -20,12 +20,12 @@ impl BrightnessControl {
     /// Get the brightness control (either i2c or backlight) from the --display argument
     /// passed by the user, which might me the name, model or description
     pub fn get_from_name(display_arg: &str) -> Result<Self, eyre::Error> {
-        let br_ctl = if let Some(br_ctl) = Self::for_device(&display_arg) {
+        let br_ctl = if let Some(br_ctl) = Self::for_device(display_arg) {
             br_ctl
         } else {
             // If we can't find the display by its name, try the model and description
             let displays = DisplayInfo::get_displays()?;
-            let display = displays.iter().find(|d| d.match_name(&display_arg));
+            let display = displays.iter().find(|d| d.match_name(display_arg));
             match display {
                 Some(display) => {
                     let br_ctl = BrightnessControl::for_device(&display.name);
@@ -69,7 +69,8 @@ impl BrightnessControl {
                     {
                         return Some(Ok(BrightnessControl::Backlight(backlight)));
                     }
-                    // Try all the available i2c devices
+                    // Try all the available i2c devices before the ddc symlink
+                    // This works for DP
                     for index in 1..=20 {
                         let i2c_device = format!("i2c-{index}");
                         let path = entry.path().join(&i2c_device);
@@ -78,6 +79,7 @@ impl BrightnessControl {
                             match ddc_display {
                                 Ok(ddc_display) => {
                                     return Some(Ok(BrightnessControl::I2c(ddc_display)));
+                                    // return Some(Ok(BrightnessControl::I2c(ddc_display)));
                                 }
                                 Err(err) => {
                                     return Some(Err(err));
@@ -85,7 +87,17 @@ impl BrightnessControl {
                             }
                         }
                     }
-                    None
+                    // Fallback to the ddc symlink, works for HDMI
+                    if let Ok(ddc_path) = entry.path().join("ddc").read_link() {
+                        let ddc_path = ddc_path.file_name().unwrap();
+                        let ddc_display = get_ddc_display(&ddc_path.to_string_lossy());
+                        match ddc_display {
+                            Ok(ddc_display) => Some(Ok(BrightnessControl::I2c(ddc_display))),
+                            Err(err) => Some(Err(err)),
+                        }
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
