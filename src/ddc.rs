@@ -33,7 +33,7 @@ pub fn get_ddc_display(name: &str) -> Result<ddc_hi::Display> {
     Ok(ddc_hi::Display::new(Handle::I2cDevice(ddc), display_info))
 }
 
-pub fn ddc_brightness(ddc: &mut ddc_hi::Display) -> Result<(u8, u8)> {
+pub fn ddc_brightness(ddc: &mut ddc_hi::Display) -> Result<(u16, u16)> {
     ddc.handle
         .get_vcp_feature(0x10)
         .map(|val| {
@@ -44,7 +44,7 @@ pub fn ddc_brightness(ddc: &mut ddc_hi::Display) -> Result<(u8, u8)> {
         })
         .map_err(eyre::Error::msg)
 }
-pub fn set_ddc_brightness(ddc: &mut ddc_hi::Display, new_br: u8) -> Result<()> {
+pub fn set_ddc_brightness(ddc: &mut ddc_hi::Display, new_br: u16) -> Result<()> {
     ddc.handle
         .set_vcp_feature(0x10, new_br.into())
         .map_err(eyre::Error::msg)

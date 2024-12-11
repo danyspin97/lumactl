@@ -1,4 +1,7 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use eyre::{bail, Result};
 
@@ -104,10 +107,12 @@ impl BrightnessControl {
             })
     }
 
-    pub fn brightness(&mut self) -> Result<(u8, u8)> {
+    pub fn brightness(&mut self) -> Result<(u32, u32)> {
         match self {
             BrightnessControl::Backlight(backlight) => backlight_brightness(Path::new(backlight)),
-            BrightnessControl::I2c(ref mut i2c_display) => ddc_brightness(i2c_display),
+            BrightnessControl::I2c(ref mut i2c_display) => {
+                ddc_brightness(i2c_display).map(|(br, max)| (br as u32, max as u32))
+            }
         }
     }
 
@@ -120,7 +125,7 @@ impl BrightnessControl {
                 set_backlight_brightness(Path::new(backlight), final_brightness)
             }
             BrightnessControl::I2c(ref mut i2c_display) => {
-                set_ddc_brightness(i2c_display, final_brightness)
+                set_ddc_brightness(i2c_display, final_brightness.try_into()?)
             }
         }
     }

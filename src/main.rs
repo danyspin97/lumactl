@@ -56,7 +56,7 @@ enum Subcmd {
 
 /// Calculate the new brightness value based on the current brightness value
 /// We need &mut self because Display::brightness will be called
-fn calculate_new_brightness(current_brightness: (u8, u8), new_brightness: &str) -> Result<u8> {
+fn calculate_new_brightness(current_brightness: (u32, u32), new_brightness: &str) -> Result<u32> {
     // If the brightness string start with a '-' it means relative decrease
     // If the brightness string start with a '+' it means relative increase
     // If the brightness string is a number it means absolute value
@@ -79,11 +79,11 @@ fn calculate_new_brightness(current_brightness: (u8, u8), new_brightness: &str) 
     } else {
         false
     };
-    let new_br = new_br.parse::<u8>().context("invalid brightness value")?;
+    let new_br = new_br.parse::<u32>().context("invalid brightness value")?;
     // if the value provided is a percentage, calculate the absolute value with
     // new_br * max_br / 100
     let set_val = if percentage {
-        (new_br as f32 * max_br as f32 / 100.0) as u8
+        (new_br as f32 * max_br as f32 / 100.0) as u32
     } else {
         new_br
     };
@@ -178,7 +178,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn format_brightness(brightness: u8, max_brightness: u8, percentage: bool) -> String {
+fn format_brightness(brightness: u32, max_brightness: u32, percentage: bool) -> String {
     if percentage {
         format!("{:.0}%", brightness as f32 / max_brightness as f32 * 100.0)
     } else {
